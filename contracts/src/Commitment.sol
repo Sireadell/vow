@@ -144,6 +144,7 @@ contract Commitment {
         if (paused) revert Paused();
         if (referee == msg.sender) revert InvalidReferee();
         if (penaltyRecipient == msg.sender) revert InvalidPenaltyRecipient();
+        if (penaltyRecipient == address(0)) revert InvalidPenaltyRecipient();
         if (deadline <= block.timestamp) revert InvalidDuration();
 
         uint256 duration = deadline - block.timestamp;

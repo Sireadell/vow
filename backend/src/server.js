@@ -1,10 +1,13 @@
+import cors from 'cors';
 import express from 'express';
-import { keccak256, toHex } from 'viem';
+import { createPublicClient, http, keccak256, toHex } from 'viem';
+import { COMMITMENT_ABI } from './abi.js';
 import { config } from './config.js';
 import { createJudge } from './judge.js';
 import { createAttester } from './signer.js';
 
 const app = express();
+app.use(cors());
 app.use(express.json());
 
 const judge = createJudge();
@@ -13,24 +16,47 @@ const attester = createAttester({
   chainId: config.chainId,
   contractAddress: config.contractAddress,
 });
+const publicClient = createPublicClient({ transport: http(config.rpcUrl) });
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', network: config.network, attester: attester.address });
 });
 
-// Judges a submitted proof against the commitment description. On a pass,
-// signs an EIP712 attestation that anyone can submit to confirmSuccess —
-// this endpoint never touches chain state itself, it only signs.
+// Judges the proof text that was actually bound on-chain by submitProof, and
+// signs the hash of that exact text. Both the judge input and the signed
+// hash MUST be derived from the same on-chain proofHash — otherwise someone
+// could submit garbage on-chain, then get a convincing fabricated proof
+// judged and signed separately, and confirmSuccess would still accept it
+// since the contract only checks the hash matches, not what was judged.
 app.post('/judge', async (req, res) => {
-  const { id, description, proofUri, proofContent } = req.body;
-  if (id === undefined || !description || !proofContent) {
-    return res.status(400).json({ error: 'id, description, and proofContent are required' });
+  const { id, description, proofText } = req.body;
+  if (id === undefined || !description || !proofText) {
+    return res.status(400).json({ error: 'id, description, and proofText are required' });
   }
 
   try {
-    const verdict = await judge.judge({ description, proofContent });
-    const proofHash = keccak256(toHex(proofUri || proofContent));
+    const stake = await publicClient.readContract({
+      address: config.contractAddress,
+      abi: COMMITMENT_ABI,
+      functionName: 'getStake',
+      args: [BigInt(id)],
+    });
 
+    if (stake.state !== 0) {
+      return res.status(400).json({ error: 'commitment is not Active' });
+    }
+    if (!stake.aiMode) {
+      return res.status(400).json({ error: 'commitment does not use the AI referee' });
+    }
+
+    const proofHash = keccak256(toHex(proofText));
+    if (proofHash !== stake.proofHash) {
+      return res
+        .status(400)
+        .json({ error: 'proofText does not match the proof hash submitted on-chain for this commitment' });
+    }
+
+    const verdict = await judge.judge({ description, proofContent: proofText });
     if (!verdict.success) {
       return res.json({ success: false, reasoning: verdict.reasoning });
     }

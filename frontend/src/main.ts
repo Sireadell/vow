@@ -73,7 +73,7 @@ app.innerHTML = `
       <button id="connect-btn" class="primary">Connect Wallet</button>
     </div>
   </header>
-  <p class="tagline">Stake real money on a commitment. Succeed and get it back. Fail — even by staying silent — and it moves. No one can dodge it.</p>
+  <p class="tagline">Stake real money on a commitment. Succeed and get it back. Fail, even by staying silent, and it moves. No one can dodge it.</p>
 
   <div id="create-panel" class="panel">
     <h2>Make a commitment</h2>
@@ -120,7 +120,7 @@ app.innerHTML = `
     <div id="commitments-list"><p class="empty-state">Connect a wallet to load commitments.</p></div>
   </div>
 
-  <p class="footer-note">Built for the Spark hackathon on Monad. Referee mode: AI (default) or a named human referee. Failure fires automatically once the deadline plus grace window passes — no self-reporting required.</p>
+  <p class="footer-note">Built for the Spark hackathon on Monad. Referee mode: AI (default) or a named human referee. Failure fires automatically once the deadline plus grace window passes. Nobody has to report it themselves.</p>
 `;
 
 const templateRow = document.getElementById('template-row')!;
@@ -167,7 +167,7 @@ penaltyPreset.addEventListener('change', () => {
   penaltyWarning.style.display = penaltyPreset.value === 'referee' ? 'block' : 'none';
   if (penaltyPreset.value === 'referee') {
     penaltyWarning.textContent =
-      "Your referee profits if you fail — only pick this if you deeply trust them not to sandbag an honest success.";
+      'Your referee profits if you fail. Only pick this if you deeply trust them not to sandbag an honest success.';
   }
 });
 
@@ -452,13 +452,12 @@ function renderCommitmentCard(entry: CommitmentEntry, stakeData: Stake, failedId
           body: JSON.stringify({
             id: Number(entry.id),
             description: entry.description,
-            proofUri: proofText,
-            proofContent: proofText,
+            proofText,
           }),
         });
         const data = await res.json();
         resultBox.className = `judge-result ${data.success ? 'pass' : 'fail'}`;
-        resultBox.textContent = `${data.success ? 'PASS' : 'FAIL'} — ${data.reasoning}`;
+        resultBox.textContent = `${data.success ? 'PASS' : 'FAIL'}: ${data.reasoning}`;
         actions.appendChild(resultBox);
         if (data.success) {
           const confirmBtn = document.createElement('button');
@@ -501,7 +500,7 @@ function renderCommitmentCard(entry: CommitmentEntry, stakeData: Stake, failedId
     failBtn.className = 'danger';
     failBtn.textContent = 'Execute Failure (permissionless)';
     failBtn.addEventListener('click', async () => {
-      if (!state.account) return alert('Connect a wallet first — anyone can call this, but a wallet is needed to send the transaction.');
+      if (!state.account) return alert('Connect a wallet first. Anyone can call this, but a wallet is needed to send the transaction.');
       try {
         failBtn.disabled = true;
         const hash = await state.walletClient!.writeContract({

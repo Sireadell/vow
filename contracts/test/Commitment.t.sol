@@ -87,6 +87,14 @@ contract CommitmentTest is Test {
         );
     }
 
+    function test_createCommitment_revertsWhenPenaltyRecipientIsZeroAddress() public {
+        vm.prank(staker);
+        vm.expectRevert(Commitment.InvalidPenaltyRecipient.selector);
+        c.createCommitment{value: 0.1 ether + PROTOCOL_FEE}(
+            "x", block.timestamp + 1 days, referee, address(0)
+        );
+    }
+
     function test_createCommitment_revertsOnBadDuration() public {
         vm.startPrank(staker);
         vm.expectRevert(Commitment.InvalidDuration.selector);

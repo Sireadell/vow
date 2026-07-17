@@ -26,7 +26,7 @@ Chosen at creation time, not after the fact:
 
 ## Design choices, disclosed rather than hidden
 
-- The AI referee is a single signing key today, not a decentralized oracle. A compromised key could let someone falsely confirm their own commitment early, but it cannot touch anyone else's stake.
+- The AI referee is a single signing key today, not a decentralized oracle. A compromised key can sign a false success for any AI mode commitment that is still active, which returns that stake to its own staker and denies the chosen failure destination on that commitment. It cannot redirect or steal anyone else's stake to itself, but it can neutralize the penalty across every outstanding AI mode commitment, so the blast radius is bigger than just the key holder's own stakes.
 - A named human referee is trusted only to not falsely approve a failure as a success. Falsely reporting failure has no upside for the referee, since the referee's fee is the same either way, except in the one case where the staker names the referee as the failure destination too, which is why that option carries an explicit warning.
 - A pooled, multi person version of this ("Group Flake Stake") was scoped out on purpose. It needs a different contract shape and was not worth the risk in the time available. Noted here as a real idea for later, not something half built.
 
