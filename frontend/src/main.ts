@@ -342,6 +342,18 @@ async function loadCommitments(): Promise<CommitmentEntry[]> {
   return logs.map((log: any) => ({ id: log.args.id as bigint, description: log.args.description as string }));
 }
 
+async function loadFailedIds(): Promise<Set<string>> {
+  if (!state.publicClient || !state.network?.contractAddress) return new Set();
+  const logs = await state.publicClient.getContractEvents({
+    address: state.network.contractAddress,
+    abi: COMMITMENT_ABI,
+    eventName: 'Failed',
+    fromBlock: 0n,
+    toBlock: 'latest',
+  });
+  return new Set(logs.map((log: any) => (log.args.id as bigint).toString()));
+}
+
 function formatCountdown(deadline: bigint): string {
   const now = BigInt(Math.floor(Date.now() / 1000));
   if (deadline <= now) return 'past deadline';
@@ -351,7 +363,7 @@ function formatCountdown(deadline: bigint): string {
   return `${h}h ${m}m left`;
 }
 
-function renderCommitmentCard(entry: CommitmentEntry, stakeData: Stake): HTMLElement {
+function renderCommitmentCard(entry: CommitmentEntry, stakeData: Stake, failedIds: Set<string>): HTMLElement {
   const card = document.createElement('div');
   card.className = 'commitment-card';
 
@@ -360,9 +372,14 @@ function renderCommitmentCard(entry: CommitmentEntry, stakeData: Stake): HTMLEle
   const graceOver = now > stakeData.deadline + state.graceWindow;
   const hasProof = stakeData.proofHash !== ZERO_HASH;
   const symbol = state.network?.currencySymbol ?? '';
+  const failed = failedIds.has(entry.id.toString());
 
-  const statusLabel = stakeData.state === 1 ? 'resolved' : 'active';
-  const statusClass = stakeData.state === 1 ? 'resolved-success' : 'active';
+  let statusLabel = 'active';
+  let statusClass = 'active';
+  if (stakeData.state === 1) {
+    statusLabel = failed ? 'failed' : 'succeeded';
+    statusClass = failed ? 'resolved-failed' : 'resolved-success';
+  }
 
   card.innerHTML = `
     <div class="top-row">
@@ -517,6 +534,7 @@ async function refreshList() {
   if (entries.length === 0) {
     commitmentsList.innerHTML = '<p class="empty-state">No commitments yet. Be the first.</p>';
   } else {
+    const failedIds = await loadFailedIds();
     commitmentsList.innerHTML = '';
     for (const entry of entries.slice().reverse()) {
       const stakeData = (await state.publicClient.readContract({
@@ -525,7 +543,7 @@ async function refreshList() {
         functionName: 'getStake',
         args: [entry.id],
       })) as Stake;
-      commitmentsList.appendChild(renderCommitmentCard(entry, stakeData));
+      commitmentsList.appendChild(renderCommitmentCard(entry, stakeData, failedIds));
     }
   }
 

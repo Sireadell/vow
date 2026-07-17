@@ -105,4 +105,13 @@ export const COMMITMENT_ABI = [
       { name: 'description', type: 'string', indexed: false },
     ],
   },
+  {
+    type: 'event',
+    name: 'Failed',
+    inputs: [
+      { name: 'id', type: 'uint256', indexed: true },
+      { name: 'staker', type: 'address', indexed: true },
+      { name: 'proofHash', type: 'bytes32', indexed: false },
+    ],
+  },
 ] as const;
