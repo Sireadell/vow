@@ -7,7 +7,7 @@ import {Commitment} from "../src/Commitment.sol";
 contract CommitmentTest is Test {
     Commitment c;
 
-    address treasury = address(0xT1);
+    address treasury = address(0xFEE5);
     address staker = address(0xA11CE);
     address referee = address(0xB0B);
     address charity = address(0xCAA5E);
