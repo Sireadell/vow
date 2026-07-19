@@ -87,6 +87,7 @@ app.innerHTML = `
     <div class="logo"><span class="mark"></span>V<span>ow</span></div>
     <nav>
       <a href="#stake-widget">Stake</a>
+      <a href="#commitments-section">Track</a>
       <a href="#how-it-works">How it works</a>
       <a href="#roadmap">Roadmap</a>
     </nav>

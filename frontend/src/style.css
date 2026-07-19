@@ -613,6 +613,7 @@ section.block {
   max-width: 780px;
   margin-left: auto;
   margin-right: auto;
+  scroll-margin-top: 84px;
 }
 
 .eyebrow {
