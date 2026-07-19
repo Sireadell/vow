@@ -131,11 +131,18 @@ nav a {
   text-decoration: none;
   font-size: 0.8rem;
   letter-spacing: 0.02em;
-  padding: 0.2rem 0;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
 nav a:hover {
   color: var(--text);
+}
+
+nav a.active {
+  color: var(--text);
+  background: rgba(248, 110, 0, 0.16);
 }
 
 .content {
@@ -211,6 +218,7 @@ nav a:hover {
   width: 450px;
   max-width: 450px;
   margin: 0;
+  scroll-margin-top: 84px;
 }
 
 .widget-wrap .panel {

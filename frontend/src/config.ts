@@ -33,7 +33,7 @@ export const NETWORKS: Record<number, NetworkConfig> = {
   10143: {
     name: 'Monad Testnet',
     contractAddress: '0xB0A6AAdD39b8760213474151bd55BdeB7542d8Fc',
-    backendUrl: 'http://localhost:3001',
+    backendUrl: 'https://vow-backend-xh1t.onrender.com',
     explorerUrl: 'https://testnet.monadexplorer.com',
     rpcUrl: 'https://testnet-rpc.monad.xyz/',
     currencySymbol: 'MON',

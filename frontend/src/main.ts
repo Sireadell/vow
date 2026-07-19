@@ -86,6 +86,7 @@ app.innerHTML = `
   <header>
     <div class="logo"><span class="mark"></span>V<span>ow</span></div>
     <nav>
+      <a href="#stake-widget">Stake</a>
       <a href="#how-it-works">How it works</a>
       <a href="#roadmap">Roadmap</a>
     </nav>
@@ -110,7 +111,7 @@ app.innerHTML = `
         </div>
       </div>
 
-      <div class="widget-wrap">
+      <div class="widget-wrap" id="stake-widget">
         <div class="panel">
           <div class="page-tabs">
             <button class="active" aria-current="page" style="cursor:default;">Stake</button>
@@ -271,6 +272,29 @@ function scrollToCommitments() {
   commitmentsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 tabBtnTrack.addEventListener('click', scrollToCommitments);
+
+const navLinks = [...document.querySelectorAll<HTMLAnchorElement>('header nav a[href^="#"]')];
+const navSections = navLinks
+  .map((link) => document.querySelector(link.getAttribute('href')!))
+  .filter((el): el is Element => el !== null);
+if (navSections.length) {
+  const setActiveNav = (id: string) => {
+    for (const link of navLinks) {
+      link.classList.toggle('active', link.getAttribute('href') === `#${id}`);
+    }
+  };
+  const sectionObserver = new IntersectionObserver(
+    (entries) => {
+      const visible = entries.filter((e) => e.isIntersecting);
+      if (visible.length) {
+        visible.sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        setActiveNav(visible[0].target.id);
+      }
+    },
+    { rootMargin: '-88px 0px -70% 0px', threshold: 0 },
+  );
+  navSections.forEach((section) => sectionObserver.observe(section));
+}
 
 for (const t of TEMPLATES) {
   const b = document.createElement('button');
