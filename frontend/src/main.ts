@@ -22,7 +22,7 @@ declare global {
 }
 
 const BURN_ADDRESS = '0x000000000000000000000000000000000000dEaD' as const;
-const RESOLVED_PAGE_SIZE = 5;
+const LIST_PAGE_SIZE = 5;
 
 const TEMPLATES = [
   { key: 'ship', label: 'Ship It', placeholder: 'Ship the Spark hackathon submission by the deadline' },
@@ -56,7 +56,8 @@ const state: {
   minDuration: bigint;
   maxDuration: bigint;
   selectedTemplate: (typeof TEMPLATES)[number]['key'];
-  resolvedShown: number;
+  commitmentsTab: 'active' | 'needsAction' | 'resolved';
+  commitmentsPage: number;
 } = {
   account: null,
   chainId: null,
@@ -67,7 +68,8 @@ const state: {
   minDuration: 0n,
   maxDuration: 0n,
   selectedTemplate: 'ship',
-  resolvedShown: RESOLVED_PAGE_SIZE,
+  commitmentsTab: 'active',
+  commitmentsPage: 0,
 };
 
 const ZERO_HASH = '0x0000000000000000000000000000000000000000000000000000000000000000' as const;
@@ -104,7 +106,7 @@ app.innerHTML = `
         <div class="rule"></div>
         <p class="tagline">Stake real money on a commitment. Succeed and get it back. Fail, even by staying silent, and it moves. No one can dodge it.</p>
         <div class="hero-trust">
-          <strong>The judge and the payout are cryptographically the same thing.</strong> The exact proof text that gets judged is the same text hashed and checked onchain, so there is no gap between what was judged and what gets enforced.
+          <strong>An AI judges your proof, not a person.</strong> It reads what you submit and rules pass or fail on the spot. That exact text is hashed and checked onchain, so what got judged is exactly what gets enforced, nothing swapped in after.
         </div>
       </div>
 
@@ -382,7 +384,8 @@ async function connectWallet() {
     // resetting to the disconnected state is the correct response.
     window.ethereum.on?.('accountsChanged', (accs: Address[]) => {
       state.account = accs[0] ?? null;
-      state.resolvedShown = RESOLVED_PAGE_SIZE;
+      state.commitmentsTab = 'active';
+      state.commitmentsPage = 0;
       render();
       refreshList();
     });
@@ -405,7 +408,8 @@ function disconnectWallet() {
   state.publicClient = null;
   state.chainId = null;
   state.network = undefined;
-  state.resolvedShown = RESOLVED_PAGE_SIZE;
+  state.commitmentsTab = 'active';
+  state.commitmentsPage = 0;
   render();
   refreshList();
 }
@@ -1033,14 +1037,15 @@ function renderCommitmentCard(entry: CommitmentEntry, stakeData: Stake, failedId
     }
   }
 
+  let failBtn: HTMLButtonElement | null = null;
   if (stakeData.state === 0 && graceOver) {
-    const failBtn = document.createElement('button');
+    failBtn = document.createElement('button');
     failBtn.className = 'danger';
     failBtn.textContent = 'Execute Failure (anyone can trigger this)';
     failBtn.addEventListener('click', async () => {
       if (!state.account) return alert('Connect a wallet first. Anyone can call this, but a wallet is needed to send the transaction.');
       try {
-        failBtn.disabled = true;
+        failBtn!.disabled = true;
         const hash = await state.walletClient!.writeContract({
           account: state.account,
           chain: null,
@@ -1057,6 +1062,19 @@ function renderCommitmentCard(entry: CommitmentEntry, stakeData: Stake, failedId
       }
     });
     actions.appendChild(failBtn);
+  }
+
+  // Once grace is over, the commitment is effectively failed and only
+  // waiting on someone to call executeFailure — proof submission or AI
+  // judging at that point can't change the outcome, so every other
+  // control in the card is switched off. Only the execute button (the
+  // one action that still does something) stays live.
+  if (graceOver) {
+    actions.querySelectorAll('button, textarea').forEach((el) => {
+      if (el !== failBtn) {
+        (el as HTMLButtonElement | HTMLTextAreaElement).disabled = true;
+      }
+    });
   }
 
   card.appendChild(actions);
@@ -1121,39 +1139,76 @@ async function refreshList() {
         const expired = own.filter((o) => o.stake.state === 0 && isExpired(o.stake));
         const resolved = own.filter((o) => o.stake.state !== 0);
 
-        for (const { entry, stake } of active) {
-          commitmentsList.appendChild(renderCommitmentCard(entry, stake, failedIds));
-        }
+        // A tab per category instead of stacking all three vertically —
+        // most visits only care about one bucket, so this keeps the panel
+        // short no matter how many commitments pile up over time. Within
+        // a tab, real Prev/Next paging (not an accumulating "show more")
+        // keeps each page a fixed, bounded size.
+        const tabs: { key: typeof state.commitmentsTab; label: string; items: typeof active; emptyText: string }[] = [
+          { key: 'active', label: 'Active', items: active, emptyText: 'Nothing active right now.' },
+          {
+            key: 'needsAction',
+            label: 'Needs action',
+            items: expired,
+            emptyText: 'Nothing waiting on execution.',
+          },
+          { key: 'resolved', label: 'Resolved', items: resolved, emptyText: 'Nothing resolved yet.' },
+        ];
 
-        if (expired.length > 0) {
-          const divider = document.createElement('div');
-          divider.className = 'list-divider';
-          divider.textContent = 'Deadline passed, not resolved yet';
-          commitmentsList.appendChild(divider);
-          for (const { entry, stake } of expired) {
-            commitmentsList.appendChild(renderCommitmentCard(entry, stake, failedIds));
-          }
-        }
-
-        const shown = resolved.slice(0, state.resolvedShown);
-        if (shown.length > 0) {
-          const divider = document.createElement('div');
-          divider.className = 'list-divider';
-          divider.textContent = 'Resolved';
-          commitmentsList.appendChild(divider);
-          for (const { entry, stake } of shown) {
-            commitmentsList.appendChild(renderCommitmentCard(entry, stake, failedIds));
-          }
-        }
-
-        if (resolved.length > state.resolvedShown) {
-          const moreBtn = document.createElement('button');
-          moreBtn.textContent = `Show ${Math.min(RESOLVED_PAGE_SIZE, resolved.length - state.resolvedShown)} more`;
-          moreBtn.addEventListener('click', () => {
-            state.resolvedShown += RESOLVED_PAGE_SIZE;
+        const tabBar = document.createElement('div');
+        tabBar.className = 'page-tabs commitments-tabs';
+        for (const tab of tabs) {
+          const btn = document.createElement('button');
+          btn.textContent = `${tab.label} (${tab.items.length})`;
+          btn.className = state.commitmentsTab === tab.key ? 'active' : '';
+          btn.addEventListener('click', () => {
+            if (state.commitmentsTab === tab.key) return;
+            state.commitmentsTab = tab.key;
+            state.commitmentsPage = 0;
             refreshList();
           });
-          commitmentsList.appendChild(moreBtn);
+          tabBar.appendChild(btn);
+        }
+        commitmentsList.appendChild(tabBar);
+
+        const currentTab = tabs.find((t) => t.key === state.commitmentsTab) ?? tabs[0];
+        if (currentTab.items.length === 0) {
+          const p = document.createElement('p');
+          p.className = 'empty-state';
+          p.textContent = currentTab.emptyText;
+          commitmentsList.appendChild(p);
+        } else {
+          const totalPages = Math.ceil(currentTab.items.length / LIST_PAGE_SIZE);
+          state.commitmentsPage = Math.min(state.commitmentsPage, totalPages - 1);
+          const start = state.commitmentsPage * LIST_PAGE_SIZE;
+          for (const { entry, stake } of currentTab.items.slice(start, start + LIST_PAGE_SIZE)) {
+            commitmentsList.appendChild(renderCommitmentCard(entry, stake, failedIds));
+          }
+          if (totalPages > 1) {
+            const pager = document.createElement('div');
+            pager.className = 'pager';
+            const prevBtn = document.createElement('button');
+            prevBtn.textContent = '← Prev';
+            prevBtn.disabled = state.commitmentsPage === 0;
+            prevBtn.addEventListener('click', () => {
+              state.commitmentsPage -= 1;
+              refreshList();
+            });
+            const pageLabel = document.createElement('span');
+            pageLabel.className = 'pager-label';
+            pageLabel.textContent = `Page ${state.commitmentsPage + 1} of ${totalPages}`;
+            const nextBtn = document.createElement('button');
+            nextBtn.textContent = 'Next →';
+            nextBtn.disabled = state.commitmentsPage >= totalPages - 1;
+            nextBtn.addEventListener('click', () => {
+              state.commitmentsPage += 1;
+              refreshList();
+            });
+            pager.appendChild(prevBtn);
+            pager.appendChild(pageLabel);
+            pager.appendChild(nextBtn);
+            commitmentsList.appendChild(pager);
+          }
         }
       }
     } catch (err: any) {
