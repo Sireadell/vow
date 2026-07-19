@@ -4,6 +4,7 @@ import { createPublicClient, http, keccak256, toHex } from 'viem';
 import { COMMITMENT_ABI } from './abi.js';
 import { config } from './config.js';
 import { createJudge } from './judge.js';
+import { enrichProofContent } from './linkVerify.js';
 import { createAttester } from './signer.js';
 
 const app = express();
@@ -31,7 +32,7 @@ app.get('/health', (req, res) => {
 app.post('/judge', async (req, res) => {
   const { id, description, proofText } = req.body;
   if (id === undefined || !description || !proofText) {
-    return res.status(400).json({ error: 'id, description, and proofText are required' });
+    return res.status(400).json({ error: 'Something was missing from the request. Refresh the page and try again.' });
   }
 
   try {
@@ -43,20 +44,28 @@ app.post('/judge', async (req, res) => {
     });
 
     if (stake.state !== 0) {
-      return res.status(400).json({ error: 'commitment is not Active' });
+      return res.status(400).json({ error: "This commitment has already been resolved, so it can't be judged again." });
     }
     if (!stake.aiMode) {
-      return res.status(400).json({ error: 'commitment does not use the AI referee' });
+      return res
+        .status(400)
+        .json({ error: 'This commitment uses a human referee, not the AI. Ask your referee to confirm it instead.' });
     }
 
     const proofHash = keccak256(toHex(proofText));
     if (proofHash !== stake.proofHash) {
-      return res
-        .status(400)
-        .json({ error: 'proofText does not match the proof hash submitted on-chain for this commitment' });
+      return res.status(400).json({
+        error:
+          "This text doesn't match what you last submitted onchain. Use \"Submit Different Proof\" to update it, then try judging again.",
+      });
     }
 
-    const verdict = await judge.judge({ description, proofContent: proofText });
+    // Enrich once, upstream of the judge, so any URL in the proof gets
+    // actually fetched and verified by the server (GitHub API for repo
+    // links, guarded plain GET otherwise) no matter which provider judges.
+    // Never throws — failures degrade into explicit notes in the prompt.
+    const enrichedProof = await enrichProofContent(proofText);
+    const verdict = await judge.judge({ description, proofContent: enrichedProof });
     if (!verdict.success) {
       return res.json({ success: false, reasoning: verdict.reasoning });
     }

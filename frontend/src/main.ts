@@ -3,6 +3,8 @@ import {
   createWalletClient,
   custom,
   formatEther,
+  getAbiItem,
+  http,
   parseEther,
   zeroAddress,
   type Address,
@@ -10,7 +12,7 @@ import {
   type WalletClient,
 } from 'viem';
 import { COMMITMENT_ABI } from './abi';
-import { NETWORKS, getNetworkConfig, type NetworkConfig } from './config';
+import { getNetworkConfig, type NetworkConfig } from './config';
 import './style.css';
 
 declare global {
@@ -20,9 +22,10 @@ declare global {
 }
 
 const BURN_ADDRESS = '0x000000000000000000000000000000000000dEaD' as const;
+const RESOLVED_PAGE_SIZE = 5;
 
 const TEMPLATES = [
-  { key: 'ship', label: 'Ship-It Stake', placeholder: 'Ship the Spark hackathon submission by the deadline' },
+  { key: 'ship', label: 'Ship It', placeholder: 'Ship the Spark hackathon submission by the deadline' },
   { key: 'quit', label: 'Quit-It Stake', placeholder: 'No sugar for 7 days' },
   { key: 'snooze', label: 'No-Snooze Stake', placeholder: 'Be at my desk by 7am every day this week' },
 ] as const;
@@ -50,7 +53,10 @@ const state: {
   walletClient: WalletClient | null;
   publicClient: PublicClient | null;
   graceWindow: bigint;
+  minDuration: bigint;
+  maxDuration: bigint;
   selectedTemplate: (typeof TEMPLATES)[number]['key'];
+  resolvedShown: number;
 } = {
   account: null,
   chainId: null,
@@ -58,73 +64,187 @@ const state: {
   walletClient: null,
   publicClient: null,
   graceWindow: 0n,
+  minDuration: 0n,
+  maxDuration: 0n,
   selectedTemplate: 'ship',
+  resolvedShown: RESOLVED_PAGE_SIZE,
 };
 
 const ZERO_HASH = '0x0000000000000000000000000000000000000000000000000000000000000000' as const;
 
+const EXPLORER_CONTRACT_URL = 'https://testnet.monadexplorer.com/address/0xB0A6AAdD39b8760213474151bd55BdeB7542d8Fc';
+
 const app = document.getElementById('app')!;
 app.innerHTML = `
+  <div class="top-banner">
+    Deployed live on Monad testnet. Real stakes, real payouts.
+    <a href="${EXPLORER_CONTRACT_URL}" target="_blank" rel="noopener">See contract</a>
+  </div>
+
   <header>
-    <h1>Ship-It <span>Stake</span></h1>
+    <div class="logo"><span class="mark"></span>V<span>ow</span></div>
+    <nav>
+      <a href="#how-it-works">How it works</a>
+      <a href="#roadmap">Roadmap</a>
+    </nav>
     <div class="wallet-bar">
-      <span id="network-badge" class="network-badge">not connected</span>
-      <span id="address-pill" class="address-pill"></span>
+      <div id="wallet-chip" class="wallet-chip">
+        <span id="network-badge"></span>
+        <span class="chip-sep">/</span>
+        <span id="address-pill"></span>
+      </div>
       <button id="connect-btn" class="primary">Connect Wallet</button>
     </div>
   </header>
-  <p class="tagline">Stake real money on a commitment. Succeed and get it back. Fail, even by staying silent, and it moves. No one can dodge it.</p>
 
-  <div id="create-panel" class="panel">
-    <h2>Make a commitment</h2>
-    <div id="template-row" class="template-row"></div>
-    <label for="description">What are you committing to</label>
-    <input type="text" id="description" placeholder="${TEMPLATES[0].placeholder}" />
+  <div class="content">
+    <div class="hero-row">
+      <div class="hero">
+        <h1>Put your word <span class="accent">on the line.</span></h1>
+        <div class="rule"></div>
+        <p class="tagline">Stake real money on a commitment. Succeed and get it back. Fail, even by staying silent, and it moves. No one can dodge it.</p>
+        <div class="hero-trust">
+          <strong>The judge and the payout are cryptographically the same thing.</strong> The exact proof text that gets judged is the same text hashed and checked onchain, so there is no gap between what was judged and what gets enforced.
+        </div>
+      </div>
 
-    <label for="deadline">Deadline</label>
-    <input type="datetime-local" id="deadline" />
+      <div class="widget-wrap">
+        <div class="panel">
+          <div class="page-tabs">
+            <button class="active" aria-current="page" style="cursor:default;">Stake</button>
+            <button id="tab-btn-track">Track &rarr;</button>
+          </div>
 
-    <label for="stake">Stake amount</label>
-    <input type="number" id="stake" step="0.001" min="0" value="0.02" />
-    <div class="hint" id="stake-hint"></div>
+          <div id="template-row" class="template-row"></div>
+          <label for="description">What are you committing to</label>
+          <input type="text" id="description" placeholder="${TEMPLATES[0].placeholder}" />
 
-    <label for="referee">Referee (leave blank for AI referee)</label>
-    <input type="text" id="referee" placeholder="0x... or leave blank for AI mode" />
+          <label for="criteria">What proof will you submit? (optional, helps the AI judge accurately)</label>
+          <textarea id="criteria" rows="2" placeholder="e.g. a link to my deployed demo and a link to my GitHub repo"></textarea>
+          <div class="warning" id="criteria-warning" style="display:none;"></div>
 
-    <label for="penalty-preset">If you fail, the stake goes to</label>
-    <select id="penalty-preset">
-      <option value="treasury">Treasury (default, safe)</option>
-      <option value="burn">Burn address (gone forever)</option>
-      <option value="custom">Custom address (charity, anti-charity, anyone)</option>
-      <option value="referee">Your referee's own address</option>
-    </select>
-    <input type="text" id="penalty-custom" placeholder="0x..." style="display:none; margin-top:0.5rem;" />
-    <div class="warning" id="penalty-warning" style="display:none;"></div>
+          <label for="deadline">Deadline</label>
+          <input type="datetime-local" id="deadline" />
 
-    <div class="actions-row">
-      <button id="create-btn" class="primary" disabled>Connect wallet to create</button>
+          <label for="stake">Stake amount</label>
+          <input type="number" id="stake" step="0.001" min="0" value="0.02" />
+          <div class="hint" id="stake-hint"></div>
+
+          <label for="referee">Referee (leave blank for AI referee)</label>
+          <input type="text" id="referee" placeholder="0x... or leave blank for AI mode" />
+
+          <label for="penalty-preset">If you fail, the stake goes to</label>
+          <select id="penalty-preset">
+            <option value="treasury">Treasury (default, safe)</option>
+            <option value="burn">Burn address (gone forever)</option>
+            <option value="custom">Custom address (charity, anti-charity, anyone)</option>
+            <option value="referee">Your referee's own address</option>
+          </select>
+          <input type="text" id="penalty-custom" placeholder="0x..." aria-label="Custom penalty address" style="display:none; margin-top:0.5rem;" />
+          <div class="warning" id="penalty-warning" style="display:none;"></div>
+
+          <div class="actions-row">
+            <button id="create-btn" class="primary" disabled>Connect wallet to create</button>
+          </div>
+        </div>
+      </div>
     </div>
-  </div>
 
-  <div id="withdraw-panel" class="panel" style="display:none;">
-    <h2>Pending balance</h2>
-    <p id="withdraw-amount"></p>
-    <button id="withdraw-btn" class="primary">Withdraw</button>
-  </div>
+    <div class="panel" id="commitments-section">
+      <div id="withdraw-panel" style="display:none;">
+        <h2>Pending balance</h2>
+        <p id="withdraw-amount"></p>
+        <button id="withdraw-btn" class="primary">Withdraw</button>
+      </div>
 
-  <div class="panel">
-    <h2 style="display:flex; justify-content:space-between; align-items:center;">
-      Commitments
-      <button id="refresh-btn">Refresh</button>
-    </h2>
-    <div id="commitments-list"><p class="empty-state">Connect a wallet to load commitments.</p></div>
-  </div>
+      <h2 style="display:flex; justify-content:space-between; align-items:center;">
+        Your commitments
+        <button id="refresh-btn">Refresh</button>
+      </h2>
+      <div id="commitments-list"><p class="empty-state">Connect a wallet to load commitments.</p></div>
+    </div>
 
-  <p class="footer-note">Built for the Spark hackathon on Monad. Referee mode: AI (default) or a named human referee. Failure fires automatically once the deadline plus grace window passes. Nobody has to report it themselves.</p>
+    <section class="block" id="how-it-works">
+      <div class="eyebrow">How it works</div>
+      <h2>Three steps, no exceptions.</h2>
+      <p class="lead">The mechanism is designed so silence can never be a way out.</p>
+      <div class="steps">
+        <div class="step">
+          <h3>1. Stake &amp; declare</h3>
+          <p>Set your commitment, deadline, referee, and exactly where the money goes if you fail.</p>
+        </div>
+        <div class="step">
+          <h3>2. Prove it</h3>
+          <p>Submit proof before the deadline. An AI or a named human referee reviews it and signs onchain.</p>
+        </div>
+        <div class="step">
+          <h3>3. It resolves itself</h3>
+          <p>Succeed and withdraw your stake. Miss the deadline plus grace window and anyone can trigger the payout, including you doing nothing.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="block">
+      <div class="eyebrow">Why this, not a clone</div>
+      <h2>What actually differentiates Vow.</h2>
+      <p class="lead">Commitment staking is not a new category. The details below are where the real difference lives.</p>
+      <div class="diff-grid">
+        <div class="diff-card">
+          <h3>Failure can't be dodged by silence</h3>
+          <p>Most similar apps rely on the loser to self-report or a centralized cron job. Here, anyone can trigger the payout once the deadline plus grace window passes, including a stranger, a keeper bot, or the loser themselves.</p>
+        </div>
+        <div class="diff-card">
+          <h3>The judge and the payout are cryptographically the same thing</h3>
+          <p>The exact proof text that gets judged is the same text that's hashed and checked onchain, with no gap between the two. Most similar designs don't enforce that coupling at all.</p>
+        </div>
+        <div class="diff-card">
+          <h3>Referee is pluggable, not hardcoded</h3>
+          <p>Swap between a real AI judge and a named human referee with no contract changes. Most competitors bake in one or the other.</p>
+        </div>
+        <div class="diff-card">
+          <h3>Where the money goes is your call</h3>
+          <p>Treasury, burn address, a charity, an anti-charity, or even the referee, with an explicit onchain risk warning if you choose that. Most versions of this idea hardcode a single destination.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="roadmap">
+      <div class="eyebrow">Where this is going</div>
+      <h2>Proof is just the start.</h2>
+      <p class="lead">What is live today is the foundation. Here is what we are building toward next.</p>
+      <div class="diff-grid vision-grid">
+        <div class="diff-card">
+          <h3>Video proof</h3>
+          <p>Right now proof is text and links. Next up: upload a video straight from your commitment card, so completion is not just claimed, it is shown.</p>
+        </div>
+        <div class="diff-card">
+          <h3>Rewards for showing up</h3>
+          <p>Getting your own stake back is the floor, not the ceiling. We are designing a rewards layer for people who consistently meet their commitments, so accountability compounds into something you win, not just something you avoid losing.</p>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <div class="fcol">
+        <h4>Vow</h4>
+        <span>Stake real money on your word. Built for Spark, a Monad Foundation hackathon.</span>
+      </div>
+      <div class="fcol">
+        <h4>Product</h4>
+        <a href="#how-it-works">How it works</a>
+        <a href="${EXPLORER_CONTRACT_URL}" target="_blank" rel="noopener">Contract on explorer</a>
+        <span>GitHub (link at submission)</span>
+        <span>Demo video (coming soon)</span>
+      </div>
+    </footer>
+    <div class="foot-bottom">Built for Spark (Monad Foundation), 2026. Deployed on Monad testnet.</div>
+  </div>
 `;
 
 const templateRow = document.getElementById('template-row')!;
 const descriptionInput = document.getElementById('description') as HTMLInputElement;
+const criteriaInput = document.getElementById('criteria') as HTMLTextAreaElement;
+const criteriaWarning = document.getElementById('criteria-warning')!;
 const deadlineInput = document.getElementById('deadline') as HTMLInputElement;
 const stakeInput = document.getElementById('stake') as HTMLInputElement;
 const stakeHint = document.getElementById('stake-hint')!;
@@ -134,6 +254,7 @@ const penaltyCustom = document.getElementById('penalty-custom') as HTMLInputElem
 const penaltyWarning = document.getElementById('penalty-warning')!;
 const createBtn = document.getElementById('create-btn') as HTMLButtonElement;
 const connectBtn = document.getElementById('connect-btn') as HTMLButtonElement;
+const walletChip = document.getElementById('wallet-chip')!;
 const networkBadge = document.getElementById('network-badge')!;
 const addressPill = document.getElementById('address-pill')!;
 const withdrawPanel = document.getElementById('withdraw-panel')!;
@@ -141,6 +262,13 @@ const withdrawAmount = document.getElementById('withdraw-amount')!;
 const withdrawBtn = document.getElementById('withdraw-btn') as HTMLButtonElement;
 const commitmentsList = document.getElementById('commitments-list')!;
 const refreshBtn = document.getElementById('refresh-btn') as HTMLButtonElement;
+const tabBtnTrack = document.getElementById('tab-btn-track') as HTMLButtonElement;
+const commitmentsSection = document.getElementById('commitments-section')!;
+
+function scrollToCommitments() {
+  commitmentsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+tabBtnTrack.addEventListener('click', scrollToCommitments);
 
 for (const t of TEMPLATES) {
   const b = document.createElement('button');
@@ -158,9 +286,38 @@ for (const t of TEMPLATES) {
 function defaultDeadline(): string {
   const d = new Date(Date.now() + 24 * 3600 * 1000);
   d.setSeconds(0, 0);
-  return d.toISOString().slice(0, 16);
+  // datetime-local expects local wall-clock components, but toISOString()
+  // returns UTC — shift by the timezone offset first so the sliced string
+  // reads as the intended local time instead of being off by the offset.
+  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
 }
 deadlineInput.value = defaultDeadline();
+
+// Words that describe an intrinsic/subjective quality of the evidence rather
+// than something checkable in it. No proof text can ever satisfy these — the
+// judge (AI or human) has nothing external to check them against, so a
+// commitment written this way can never pass and the stake is lost no matter
+// what the staker actually did. Catches the failure mode before real money
+// locks in, instead of after the deadline when it's too late to fix.
+const UNPROVABLE_WORDS =
+  /\b(random(?:ly)?|genuine(?:ly)?|honest(?:ly)?|authentic(?:ally|ity)?|sincere(?:ly)?|really|truly|actually|legit(?:imate(?:ly)?)?|meaningful(?:ly)?|worthy|deserving|by myself|on my own|without (?:any )?help|without ai|no ai)\b/i;
+
+function unprovableWarning(criteria: string): string | null {
+  const match = criteria.match(UNPROVABLE_WORDS);
+  if (!match) return null;
+  return (
+    `"${match[0]}" describes a quality no proof can show after the fact, so the judge has nothing to check it against. ` +
+    `A commitment worded this way risks failing no matter what you actually did. ` +
+    `Describe something checkable instead: a specific link or fact the judge can verify directly.`
+  );
+}
+
+criteriaInput.addEventListener('input', () => {
+  const warning = unprovableWarning(criteriaInput.value);
+  criteriaWarning.style.display = warning ? 'block' : 'none';
+  criteriaWarning.textContent = warning || '';
+});
 
 penaltyPreset.addEventListener('change', () => {
   penaltyCustom.style.display = penaltyPreset.value === 'custom' ? 'block' : 'none';
@@ -179,30 +336,76 @@ async function resolvePenaltyRecipient(): Promise<Address> {
     if (!ref) throw new Error('Set a referee address first to use this option.');
     return ref as Address;
   }
-  return (await state.publicClient!.readContract({
-    address: state.network!.contractAddress!,
-    abi: [{ type: 'function', name: 'treasury', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] }],
-    functionName: 'treasury',
-  })) as Address;
+  try {
+    return (await state.publicClient!.readContract({
+      address: state.network!.contractAddress!,
+      abi: [{ type: 'function', name: 'treasury', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] }],
+      functionName: 'treasury',
+    })) as Address;
+  } catch (err) {
+    // The raw read error is dev-facing noise; the alert path shows err.message.
+    console.error('Treasury lookup failed:', err);
+    throw new Error('Could not look up the treasury address. Try again in a moment.');
+  }
 }
+
+// Wallet event listeners are attached once per page load, never per
+// connect — reconnecting used to stack a fresh pair of listeners on every
+// connectWallet() call (they also survived disconnectWallet()), so one real
+// accountsChanged event would fan out into N duplicate render/refresh runs
+// racing each other over the list DOM.
+let walletListenersAttached = false;
 
 async function connectWallet() {
   if (!window.ethereum) {
-    alert('No wallet found. Install MetaMask or another injected wallet.');
+    alert('No wallet found. Install MetaMask or another browser wallet, then try again.');
     return;
   }
   state.walletClient = createWalletClient({ transport: custom(window.ethereum) });
-  const [account] = await state.walletClient.requestAddresses();
-  state.account = account;
+  let account: Address | undefined;
+  try {
+    [account] = await state.walletClient.requestAddresses();
+  } catch {
+    // User closed or rejected the wallet's connect prompt — nothing to do.
+    return;
+  }
+  state.account = account ?? null;
   await syncChain();
-  window.ethereum.on?.('accountsChanged', (accs: Address[]) => {
-    state.account = accs[0] ?? null;
-    render();
-    refreshList();
-  });
-  window.ethereum.on?.('chainChanged', () => {
-    syncChain().then(() => refreshList());
-  });
+  if (!state.network) {
+    await switchToMonadTestnet();
+    await syncChain();
+  }
+  if (!walletListenersAttached) {
+    walletListenersAttached = true;
+    // accountsChanged with an empty array is the wallet itself ending the
+    // session (extension locked, permission revoked, idle timeout). Quietly
+    // resetting to the disconnected state is the correct response.
+    window.ethereum.on?.('accountsChanged', (accs: Address[]) => {
+      state.account = accs[0] ?? null;
+      state.resolvedShown = RESOLVED_PAGE_SIZE;
+      render();
+      refreshList();
+    });
+    window.ethereum.on?.('chainChanged', () => {
+      syncChain().then(() => refreshList());
+    });
+  }
+  render();
+  refreshList();
+}
+
+// Injected wallets (MetaMask etc.) don't expose an API for a site to force a
+// real disconnect — only the wallet's own UI can revoke the connection. This
+// clears our local app state instead (the standard pattern most dApps use
+// for a "Disconnect" button), so the UI forgets the account even though the
+// wallet extension still considers this site approved.
+function disconnectWallet() {
+  state.account = null;
+  state.walletClient = null;
+  state.publicClient = null;
+  state.chainId = null;
+  state.network = undefined;
+  state.resolvedShown = RESOLVED_PAGE_SIZE;
   render();
   refreshList();
 }
@@ -213,29 +416,28 @@ async function syncChain() {
   state.network = getNetworkConfig(state.chainId);
   state.publicClient = createPublicClient({ transport: custom(window.ethereum) }) as unknown as PublicClient;
   if (state.network?.contractAddress) {
-    state.graceWindow = (await state.publicClient.readContract({
-      address: state.network.contractAddress,
-      abi: COMMITMENT_ABI,
-      functionName: 'GRACE_WINDOW',
-    })) as bigint;
-  }
-}
-
-async function switchToLocalAnvil() {
-  try {
-    await window.ethereum.request({
-      method: 'wallet_addEthereumChain',
-      params: [
-        {
-          chainId: '0x7a69',
-          chainName: 'Local Anvil',
-          nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
-          rpcUrls: ['http://127.0.0.1:8545'],
-        },
-      ],
-    });
-  } catch (err) {
-    console.error(err);
+    try {
+      state.graceWindow = (await state.publicClient.readContract({
+        address: state.network.contractAddress,
+        abi: COMMITMENT_ABI,
+        functionName: 'GRACE_WINDOW',
+      })) as bigint;
+      state.minDuration = (await state.publicClient.readContract({
+        address: state.network.contractAddress,
+        abi: COMMITMENT_ABI,
+        functionName: 'MIN_DURATION',
+      })) as bigint;
+      state.maxDuration = (await state.publicClient.readContract({
+        address: state.network.contractAddress,
+        abi: COMMITMENT_ABI,
+        functionName: 'MAX_DURATION',
+      })) as bigint;
+    } catch (err) {
+      // A transient read failure here must not abort the whole connect flow
+      // (it previously threw out of connectWallet before render() ran,
+      // leaving the UI stuck looking half-connected).
+      console.warn('Could not read grace window, keeping previous value', err);
+    }
   }
 }
 
@@ -258,20 +460,87 @@ async function switchToMonadTestnet() {
   }
 }
 
-function render() {
-  addressPill.textContent = state.account ? `${state.account.slice(0, 6)}...${state.account.slice(-4)}` : '';
-  connectBtn.textContent = state.account ? 'Reconnect' : 'Connect Wallet';
+// Contract custom error names, translated to plain English. The ABI now
+// declares these so viem can decode a revert into one of these names
+// instead of an opaque blob, but the raw name itself ("InvalidDuration")
+// still reads like source code, not something a non-technical person
+// staking money should see as-is.
+const REVERT_REASONS: Record<string, string> = {
+  Paused: 'Creating new commitments is temporarily paused.',
+  AiPaused: 'The AI referee is temporarily paused. Try a human referee instead.',
+  InvalidReferee: "The referee can't be your own address.",
+  InvalidPenaltyRecipient: "The penalty recipient can't be your own address, and can't be blank.",
+  InvalidDuration: 'The deadline is out of range. It needs to be at least 1 hour and at most 30 days from now.',
+  InsufficientStake: 'The stake amount is below the minimum required.',
+  StakeTooHighForAi: 'That stake is too large for AI mode. Use a lower amount or a human referee.',
+  NotStaker: 'Only the person who created this commitment can do that.',
+  NotActive: 'This commitment has already been resolved.',
+  DeadlinePassed: "The deadline has already passed, so this can't be submitted anymore.",
+  GraceWindowPassed: 'The grace window has already passed, so this can no longer be confirmed.',
+  GraceWindowNotPassed: "The grace window hasn't passed yet, so this can't be closed out as failed.",
+  SignatureExpired: 'The AI signature expired before it was submitted. Request a fresh judgment and try again.',
+  InvalidSignature: 'The signature is not valid for this commitment.',
+  NotReferee: "Only this commitment's named referee can confirm it.",
+  NothingToWithdraw: "There's nothing to withdraw right now.",
+  TransferFailed: 'The transfer failed. Try again in a moment.',
+};
 
-  if (!state.chainId) {
-    networkBadge.textContent = 'not connected';
-    networkBadge.className = 'network-badge';
-  } else if (state.network?.contractAddress) {
-    networkBadge.textContent = state.network.name;
-    networkBadge.className = 'network-badge';
-  } else {
-    networkBadge.textContent = `unsupported chain ${state.chainId}`;
-    networkBadge.className = 'network-badge unsupported';
+// Turns a raw wallet/contract error into something a person staking real
+// money can act on. Keeps genuinely useful details (cancellation,
+// insufficient funds, a clean revert reason) and sends the rest to the
+// console instead of the screen.
+function friendlyTxError(err: any): string {
+  const raw = String(err?.shortMessage || err?.message || err || '');
+  if (raw.startsWith('REVERTED:')) {
+    return raw.slice('REVERTED:'.length);
   }
+  const lower = raw.toLowerCase();
+  if (err?.code === 4001 || lower.includes('user rejected') || lower.includes('user denied')) {
+    return 'Transaction canceled in your wallet.';
+  }
+  if (lower.includes('insufficient funds') || lower.includes('exceeds the balance')) {
+    return 'Not enough funds in your wallet to cover this transaction.';
+  }
+  for (const [name, plain] of Object.entries(REVERT_REASONS)) {
+    if (raw.includes(name)) return plain;
+  }
+  // A named revert reason from the contract is short and plain, keep it.
+  const revertMatch = raw.match(/reverted with the following reason:\s*\n?(.+)/i);
+  if (revertMatch) {
+    return revertMatch[1].split('\n')[0].trim();
+  }
+  console.error('Transaction failed:', err);
+  return 'The transaction could not go through. Please try again in a moment.';
+}
+
+// waitForTransactionReceipt resolves as soon as a transaction is MINED, not
+// as soon as it SUCCEEDS — a reverted transaction still gets a receipt and
+// this call still resolves normally. Every write in this app must check
+// this before treating a transaction as having actually done anything,
+// otherwise a revert silently looks like success (form clears, list
+// refreshes showing nothing changed, no error shown).
+function assertMined(receipt: { status: string }, action: string) {
+  if (receipt.status !== 'success') {
+    throw new Error(
+      `REVERTED:This ${action} did not go through on-chain (the transaction reverted). Nothing changed, so double check the details and try again.`
+    );
+  }
+}
+
+function render() {
+  const connected = Boolean(state.account);
+  walletChip.classList.toggle('visible', connected);
+  walletChip.classList.toggle('unsupported', connected && !state.network?.contractAddress);
+
+  if (connected) {
+    addressPill.textContent = `${state.account!.slice(0, 6)}...${state.account!.slice(-4)}`;
+    networkBadge.textContent = state.network?.contractAddress
+      ? state.network.name
+      : 'Unsupported network';
+  }
+
+  connectBtn.textContent = connected ? 'Disconnect' : 'Connect Wallet';
+  connectBtn.classList.toggle('primary', !connected);
 
   const ready = Boolean(state.account && state.network?.contractAddress);
   createBtn.disabled = !ready;
@@ -286,10 +555,27 @@ function render() {
 
 async function createCommitment() {
   if (!state.account || !state.walletClient || !state.network?.contractAddress) return;
-  const description = descriptionInput.value.trim();
+  let description = descriptionInput.value.trim();
   if (!description) return alert('Describe what you are committing to.');
 
+  // The contract stores/emits description as an opaque string, so staker
+  // declared success criteria are folded into it client side. The backend
+  // judge prompt knows to look for this segment. No contract change needed.
+  const criteria = criteriaInput.value.trim();
+  if (criteria) {
+    description = `${description}\n\nSuccess criteria (declared by staker): ${criteria}`;
+  }
+
   const deadlineSeconds = BigInt(Math.floor(new Date(deadlineInput.value).getTime() / 1000));
+  const nowSeconds = BigInt(Math.floor(Date.now() / 1000));
+  if (state.minDuration > 0n && deadlineSeconds - nowSeconds < state.minDuration) {
+    const minHours = Number(state.minDuration) / 3600;
+    return alert(`The deadline needs to be at least ${minHours} hour${minHours === 1 ? '' : 's'} from now.`);
+  }
+  if (state.maxDuration > 0n && deadlineSeconds - nowSeconds > state.maxDuration) {
+    const maxDays = Number(state.maxDuration) / 86400;
+    return alert(`The deadline can be at most ${maxDays} day${maxDays === 1 ? '' : 's'} from now.`);
+  }
   const stakeEth = parseFloat(stakeInput.value);
   if (!(stakeEth > 0)) return alert('Set a stake amount.');
 
@@ -320,47 +606,229 @@ async function createCommitment() {
       value,
     });
     createBtn.textContent = 'Waiting for confirmation...';
-    await state.publicClient!.waitForTransactionReceipt({ hash });
+    const receipt = await state.publicClient!.waitForTransactionReceipt({ hash });
+    assertMined(receipt, 'commitment creation');
     descriptionInput.value = '';
+    criteriaInput.value = '';
     await refreshList();
+    scrollToCommitments();
   } catch (err: any) {
-    alert(err.shortMessage || err.message || String(err));
+    alert(friendlyTxError(err));
   } finally {
     render();
   }
 }
 
-async function loadCommitments(): Promise<CommitmentEntry[]> {
-  if (!state.publicClient || !state.network?.contractAddress) return [];
-  const logs = await state.publicClient.getContractEvents({
-    address: state.network.contractAddress,
-    abi: COMMITMENT_ABI,
-    eventName: 'CommitmentCreated',
-    fromBlock: 0n,
-    toBlock: 'latest',
-  });
-  return logs.map((log: any) => ({ id: log.args.id as bigint, description: log.args.description as string }));
+// ---------------------------------------------------------------------------
+// Event-log scanning.
+//
+// Public Monad testnet RPCs hard-cap the eth_getLogs block span, each
+// differently (measured live 2026-07-18: the official RPC rejects any span
+// over 100 blocks with -32614 "eth_getLogs is limited to a 100 range"; drpc
+// rejects spans over 1000). A single deploy-to-latest query therefore breaks
+// as soon as the chain outgrows the cap — which is exactly what bit this app
+// twice. And a naive one-chunk-at-a-time backward scan through the wallet's
+// provider gets unusably slow as history grows (measured: ~57s to reach a
+// commitment only ~9k blocks old).
+//
+// The scan below:
+//  - hits the configured scan RPCs directly over HTTP (not via the wallet,
+//    whose backing RPC and caps are unknown), with per-endpoint span caps
+//    and fallback to the next endpoint if one fails mid-scan;
+//  - fetches both event types in ONE eth_getLogs per chunk (OR topic
+//    filter), several chunks in parallel per wave;
+//  - walks backward from the head and stops as soon as every commitment id
+//    reported by the contract's own nextId counter has been found (any
+//    Failed event lands at or after its commitment's creation block, so by
+//    the time every creation is found, every Failed event is too);
+//  - caches results in localStorage so later refreshes only scan blocks
+//    newer than the previous scan's head (the delta is always scanned in
+//    full, never early-stopped, so late Failed events for old commitments
+//    are still picked up);
+//  - always sends numeric from/to blocks. Passing the literal "latest" as
+//    toBlock is racy: the node may resolve it a few blocks past the head the
+//    span was computed from, pushing the range over the cap (confirmed live).
+// ---------------------------------------------------------------------------
+
+const CREATED_EVENT = getAbiItem({ abi: COMMITMENT_ABI, name: 'CommitmentCreated' });
+const FAILED_EVENT = getAbiItem({ abi: COMMITMENT_ABI, name: 'Failed' });
+const SCAN_CONCURRENCY = 8; // parallel getLogs chunks per wave
+// Re-scan a little below the cached watermark in case blocks near the head
+// we cached at were later reorged (Monad finality is fast; this is ample).
+const CACHE_OVERLAP = 100n;
+
+interface ScanResult {
+  created: CommitmentEntry[];
+  failedIds: Set<string>;
 }
 
-async function loadFailedIds(): Promise<Set<string>> {
-  if (!state.publicClient || !state.network?.contractAddress) return new Set();
-  const logs = await state.publicClient.getContractEvents({
-    address: state.network.contractAddress,
-    abi: COMMITMENT_ABI,
-    eventName: 'Failed',
-    fromBlock: 0n,
-    toBlock: 'latest',
-  });
-  return new Set(logs.map((log: any) => (log.args.id as bigint).toString()));
+interface ScanCacheShape {
+  entries: { id: string; description: string }[];
+  failedIds: string[];
+  scannedTo: string;
 }
 
-function formatCountdown(deadline: bigint): string {
+function scanCacheKey(): string {
+  return `vow-scan-${state.chainId}-${state.network?.contractAddress}`;
+}
+
+function readScanCache(): ScanCacheShape | null {
+  try {
+    const raw = localStorage.getItem(scanCacheKey());
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const isDigits = (v: unknown) => typeof v === 'string' && /^\d+$/.test(v);
+    if (
+      !Array.isArray(parsed.entries) ||
+      !Array.isArray(parsed.failedIds) ||
+      !isDigits(parsed.scannedTo) ||
+      !parsed.entries.every((e: any) => isDigits(e?.id) && typeof e?.description === 'string')
+    ) {
+      return null;
+    }
+    return parsed as ScanCacheShape;
+  } catch {
+    return null;
+  }
+}
+
+function writeScanCache(seen: Map<string, CommitmentEntry>, failedIds: Set<string>, scannedTo: bigint) {
+  try {
+    const payload: ScanCacheShape = {
+      entries: [...seen.values()].map((e) => ({ id: e.id.toString(), description: e.description })),
+      failedIds: [...failedIds],
+      scannedTo: scannedTo.toString(),
+    };
+    localStorage.setItem(scanCacheKey(), JSON.stringify(payload));
+  } catch {
+    // Private mode / quota — the cache is best-effort only.
+  }
+}
+
+const scanClients = new Map<string, PublicClient>();
+function scanClientFor(url: string): PublicClient {
+  let client = scanClients.get(url);
+  if (!client) {
+    client = createPublicClient({ transport: http(url) }) as unknown as PublicClient;
+    scanClients.set(url, client);
+  }
+  return client;
+}
+
+// Scans [floor, top] backward in waves of parallel chunks, folding results
+// into `seen`/`failedIds`. Stops early once `seen` holds `target` distinct
+// commitments (pass Infinity to force a full scan of the range).
+async function scanRange(
+  client: PublicClient,
+  address: Address,
+  maxSpan: bigint,
+  top: bigint,
+  floor: bigint,
+  target: number,
+  seen: Map<string, CommitmentEntry>,
+  failedIds: Set<string>,
+  onProgress?: (blocksLeft: bigint) => void
+): Promise<void> {
+  let to = top;
+  while (to >= floor && seen.size < target) {
+    const ranges: { from: bigint; to: bigint }[] = [];
+    while (ranges.length < SCAN_CONCURRENCY && to >= floor) {
+      const from = to - maxSpan > floor ? to - maxSpan : floor;
+      ranges.push({ from, to });
+      to = from - 1n;
+    }
+    const waves = await Promise.all(
+      ranges.map((r) =>
+        client.getLogs({
+          address,
+          events: [CREATED_EVENT, FAILED_EVENT],
+          fromBlock: r.from,
+          toBlock: r.to,
+        })
+      )
+    );
+    for (const logs of waves) {
+      for (const log of logs as any[]) {
+        if (log.eventName === 'CommitmentCreated') {
+          const idStr = (log.args.id as bigint).toString();
+          if (!seen.has(idStr)) {
+            seen.set(idStr, { id: log.args.id as bigint, description: log.args.description as string });
+          }
+        } else if (log.eventName === 'Failed') {
+          failedIds.add((log.args.id as bigint).toString());
+        }
+      }
+    }
+    onProgress?.(to >= floor ? to - floor + 1n : 0n);
+  }
+}
+
+async function scanCommitmentEvents(
+  deployBlock: bigint,
+  targetCount: number,
+  onProgress?: (blocksLeft: bigint) => void
+): Promise<ScanResult> {
+  if (!state.network?.contractAddress || targetCount === 0) {
+    return { created: [], failedIds: new Set() };
+  }
+  const address = state.network.contractAddress;
+  let lastError: unknown = null;
+
+  for (const rpc of state.network.logScanRpcs) {
+    const client = scanClientFor(rpc.url);
+    try {
+      const seen = new Map<string, CommitmentEntry>();
+      const failedIds = new Set<string>();
+      const head = await client.getBlockNumber();
+
+      const cached = readScanCache();
+      let complete = false;
+      if (cached) {
+        for (const e of cached.entries) seen.set(e.id, { id: BigInt(e.id), description: e.description });
+        for (const f of cached.failedIds) failedIds.add(f);
+        let floor = BigInt(cached.scannedTo) + 1n - CACHE_OVERLAP;
+        if (floor < deployBlock) floor = deployBlock;
+        if (floor <= head) {
+          // Delta since the last scan: always scanned in full (no early
+          // stop), so Failed events emitted since then are never missed.
+          await scanRange(client, address, rpc.maxSpan, head, floor, Infinity, seen, failedIds, onProgress);
+        }
+        complete = seen.size >= targetCount;
+        if (!complete) {
+          // Cache was stale or corrupt — fall through to a full rescan.
+          seen.clear();
+          failedIds.clear();
+        }
+      }
+      if (!complete) {
+        await scanRange(client, address, rpc.maxSpan, head, deployBlock, targetCount, seen, failedIds, onProgress);
+      }
+
+      writeScanCache(seen, failedIds, head);
+      const created = [...seen.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      return { created, failedIds };
+    } catch (err) {
+      lastError = err;
+      console.warn(`Event scan via ${rpc.url} failed, trying next endpoint`, err);
+    }
+  }
+  throw lastError ?? new Error('No log-scan RPC endpoints configured for this network.');
+}
+
+function formatCountdown(deadline: bigint, graceWindow: bigint): string {
   const now = BigInt(Math.floor(Date.now() / 1000));
-  if (deadline <= now) return 'past deadline';
+  if (deadline <= now) {
+    return now > deadline + graceWindow ? 'expired, ready to close out' : 'deadline passed, grace period running';
+  }
   const secs = Number(deadline - now);
   const h = Math.floor(secs / 3600);
   const m = Math.floor((secs % 3600) / 60);
   return `${h}h ${m}m left`;
+}
+
+function isExpired(stakeData: Stake): boolean {
+  const now = BigInt(Math.floor(Date.now() / 1000));
+  return stakeData.state === 0 && now > stakeData.deadline;
 }
 
 function renderCommitmentCard(entry: CommitmentEntry, stakeData: Stake, failedIds: Set<string>): HTMLElement {
@@ -379,6 +847,9 @@ function renderCommitmentCard(entry: CommitmentEntry, stakeData: Stake, failedId
   if (stakeData.state === 1) {
     statusLabel = failed ? 'failed' : 'succeeded';
     statusClass = failed ? 'resolved-failed' : 'resolved-success';
+  } else if (isExpired(stakeData)) {
+    statusLabel = graceOver ? 'expired' : 'grace period';
+    statusClass = graceOver ? 'resolved-failed' : 'active';
   }
 
   card.innerHTML = `
@@ -390,7 +861,7 @@ function renderCommitmentCard(entry: CommitmentEntry, stakeData: Stake, failedId
       <span>staker ${stakeData.staker.slice(0, 6)}...${stakeData.staker.slice(-4)}</span>
       <span>${formatEther(stakeData.stakeAmount)} ${symbol} staked</span>
       <span>${stakeData.aiMode ? 'AI referee' : 'human referee'}</span>
-      <span>${stakeData.state === 0 ? formatCountdown(stakeData.deadline) : ''}</span>
+      <span>${stakeData.state === 0 ? formatCountdown(stakeData.deadline, state.graceWindow) : ''}</span>
     </div>
   `;
 
@@ -417,18 +888,19 @@ function renderCommitmentCard(entry: CommitmentEntry, stakeData: Stake, failedId
           functionName: 'submitProof',
           args: [entry.id, text],
         });
-        await state.publicClient!.waitForTransactionReceipt({ hash });
+        const receipt = await state.publicClient!.waitForTransactionReceipt({ hash });
+        assertMined(receipt, 'proof submission');
         localStorage.setItem(`proof-${entry.id}`, text);
         await refreshList();
       } catch (err: any) {
-        alert(err.shortMessage || err.message || String(err));
+        alert(friendlyTxError(err));
       }
     });
     actions.appendChild(textarea);
     actions.appendChild(submitBtn);
   }
 
-  if (stakeData.state === 0 && hasProof) {
+  if (stakeData.state === 0 && hasProof && stakeData.aiMode) {
     const cached = localStorage.getItem(`proof-${entry.id}`);
     let proofBox: HTMLTextAreaElement | null = null;
     if (!cached) {
@@ -456,13 +928,33 @@ function renderCommitmentCard(entry: CommitmentEntry, stakeData: Stake, failedId
           }),
         });
         const data = await res.json();
+        if (!res.ok || typeof data.success !== 'boolean') {
+          // Server-side error ({error: ...} shape) — render it as an error,
+          // not as a judged FAIL, so a backend hiccup can't masquerade as
+          // the AI rejecting the proof. A 400 means the user did something
+          // fixable (proof text mismatch, wrong referee mode, already
+          // resolved) and server.js's message is already plain and safe to
+          // show as-is. A 500 means something broke on our end (billing,
+          // provider outage, internal error) — that detail is dev-facing
+          // only, so it goes to the console and the user sees a generic
+          // "try again" instead.
+          resultBox.className = 'judge-result error';
+          if (res.status === 400 && data.error) {
+            resultBox.textContent = data.error;
+          } else {
+            console.error('Judge request returned an error:', data.error, data.detail);
+            resultBox.textContent = "The AI judge couldn't process this right now. Try again in a moment.";
+          }
+          actions.appendChild(resultBox);
+          return;
+        }
         resultBox.className = `judge-result ${data.success ? 'pass' : 'fail'}`;
         resultBox.textContent = `${data.success ? 'PASS' : 'FAIL'}: ${data.reasoning}`;
         actions.appendChild(resultBox);
         if (data.success) {
           const confirmBtn = document.createElement('button');
           confirmBtn.className = 'primary';
-          confirmBtn.textContent = 'Confirm Success On-Chain';
+          confirmBtn.textContent = 'Confirm Success Onchain';
           confirmBtn.addEventListener('click', async () => {
             try {
               confirmBtn.disabled = true;
@@ -475,17 +967,19 @@ function renderCommitmentCard(entry: CommitmentEntry, stakeData: Stake, failedId
                 functionName: 'confirmSuccess',
                 args: [entry.id, BigInt(data.expiry), data.signature],
               });
-              await state.publicClient!.waitForTransactionReceipt({ hash });
+              const receipt = await state.publicClient!.waitForTransactionReceipt({ hash });
+              assertMined(receipt, 'confirmation');
               await refreshList();
             } catch (err: any) {
-              alert(err.shortMessage || err.message || String(err));
+              alert(friendlyTxError(err));
             }
           });
           actions.appendChild(confirmBtn);
         }
       } catch (err: any) {
-        resultBox.className = 'judge-result fail';
-        resultBox.textContent = `Judge request failed: ${err.message || err}. Is the backend running?`;
+        console.error('Judge request failed:', err);
+        resultBox.className = 'judge-result error';
+        resultBox.textContent = "Couldn't reach the AI judge right now. Try again in a moment.";
         actions.appendChild(resultBox);
       } finally {
         judgeBtn.disabled = false;
@@ -493,12 +987,56 @@ function renderCommitmentCard(entry: CommitmentEntry, stakeData: Stake, failedId
       }
     });
     actions.appendChild(judgeBtn);
+
+    if (isStaker) {
+      const retryBtn = document.createElement('button');
+      retryBtn.textContent = 'Submit Different Proof';
+      const retryBox = document.createElement('div');
+      retryBox.style.cssText = 'display:none; flex-basis:100%; gap:0.5rem; flex-direction:column;';
+      const retryTextarea = document.createElement('textarea');
+      retryTextarea.placeholder = 'Replace your submitted proof with new text before re-judging...';
+      const retrySubmitBtn = document.createElement('button');
+      retrySubmitBtn.className = 'primary';
+      retrySubmitBtn.textContent = 'Resubmit Proof';
+      retrySubmitBtn.addEventListener('click', async () => {
+        const text = retryTextarea.value.trim();
+        if (!text) return alert('Add some proof text first.');
+        try {
+          retrySubmitBtn.disabled = true;
+          retrySubmitBtn.textContent = 'Confirm in wallet...';
+          const hash = await state.walletClient!.writeContract({
+            account: state.account!,
+            chain: null,
+            address: state.network!.contractAddress!,
+            abi: COMMITMENT_ABI,
+            functionName: 'submitProof',
+            args: [entry.id, text],
+          });
+          const receipt = await state.publicClient!.waitForTransactionReceipt({ hash });
+          assertMined(receipt, 'proof submission');
+          localStorage.setItem(`proof-${entry.id}`, text);
+          await refreshList();
+        } catch (err: any) {
+          alert(friendlyTxError(err));
+        } finally {
+          retrySubmitBtn.disabled = false;
+          retrySubmitBtn.textContent = 'Resubmit Proof';
+        }
+      });
+      retryBtn.addEventListener('click', () => {
+        retryBox.style.display = retryBox.style.display === 'none' ? 'flex' : 'none';
+      });
+      retryBox.appendChild(retryTextarea);
+      retryBox.appendChild(retrySubmitBtn);
+      actions.appendChild(retryBtn);
+      actions.appendChild(retryBox);
+    }
   }
 
   if (stakeData.state === 0 && graceOver) {
     const failBtn = document.createElement('button');
     failBtn.className = 'danger';
-    failBtn.textContent = 'Execute Failure (permissionless)';
+    failBtn.textContent = 'Execute Failure (anyone can trigger this)';
     failBtn.addEventListener('click', async () => {
       if (!state.account) return alert('Connect a wallet first. Anyone can call this, but a wallet is needed to send the transaction.');
       try {
@@ -511,10 +1049,11 @@ function renderCommitmentCard(entry: CommitmentEntry, stakeData: Stake, failedId
           functionName: 'executeFailure',
           args: [entry.id],
         });
-        await state.publicClient!.waitForTransactionReceipt({ hash });
+        const receipt = await state.publicClient!.waitForTransactionReceipt({ hash });
+        assertMined(receipt, 'failure execution');
         await refreshList();
       } catch (err: any) {
-        alert(err.shortMessage || err.message || String(err));
+        alert(friendlyTxError(err));
       }
     });
     actions.appendChild(failBtn);
@@ -525,39 +1064,123 @@ function renderCommitmentCard(entry: CommitmentEntry, stakeData: Stake, failedId
 }
 
 async function refreshList() {
-  if (!state.publicClient || !state.network?.contractAddress) {
+  // Checking account too (not just the clients) matters for the wallet
+  // locking or revoking the session on its own: accountsChanged fires with
+  // no accounts, and without this check the list would still scan and then
+  // tell a signed-out user "You haven't created a commitment yet."
+  if (!state.account || !state.publicClient || !state.network?.contractAddress) {
     commitmentsList.innerHTML = '<p class="empty-state">Connect a wallet to load commitments.</p>';
     return;
   }
-  const entries = await loadCommitments();
+  let entries: CommitmentEntry[];
+  let failedIds: Set<string>;
+  try {
+    const nextId = (await state.publicClient.readContract({
+      address: state.network.contractAddress,
+      abi: COMMITMENT_ABI,
+      functionName: 'nextId',
+    })) as bigint;
+    if (nextId > 0n) {
+      commitmentsList.innerHTML = '<p class="empty-state">Loading your commitments&hellip;</p>';
+    }
+    ({ created: entries, failedIds } = await scanCommitmentEvents(state.network.deployBlock, Number(nextId)));
+  } catch (err: any) {
+    console.error('Failed to load commitments', err);
+    commitmentsList.innerHTML = '';
+    const p = document.createElement('p');
+    p.className = 'empty-state';
+    p.textContent = 'Could not load commitments right now. Hit Refresh to try again.';
+    commitmentsList.appendChild(p);
+    return;
+  }
   if (entries.length === 0) {
     commitmentsList.innerHTML = '<p class="empty-state">No commitments yet. Be the first.</p>';
   } else {
-    const failedIds = await loadFailedIds();
     commitmentsList.innerHTML = '';
-    for (const entry of entries.slice().reverse()) {
-      const stakeData = (await state.publicClient.readContract({
-        address: state.network.contractAddress,
-        abi: COMMITMENT_ABI,
-        functionName: 'getStake',
-        args: [entry.id],
-      })) as Stake;
-      commitmentsList.appendChild(renderCommitmentCard(entry, stakeData, failedIds));
+    try {
+      // "Your commitments" means yours — filter to the connected staker
+      // instead of listing everyone's, so the list stays short and the
+      // heading matches what it actually shows.
+      const own: { entry: CommitmentEntry; stake: Stake }[] = [];
+      for (const entry of entries.slice().reverse()) {
+        const stakeData = (await state.publicClient.readContract({
+          address: state.network.contractAddress,
+          abi: COMMITMENT_ABI,
+          functionName: 'getStake',
+          args: [entry.id],
+        })) as Stake;
+        if (state.account && stakeData.staker.toLowerCase() === state.account.toLowerCase()) {
+          own.push({ entry, stake: stakeData });
+        }
+      }
+
+      if (own.length === 0) {
+        commitmentsList.innerHTML = '<p class="empty-state">You haven\'t created a commitment yet.</p>';
+      } else {
+        const active = own.filter((o) => o.stake.state === 0 && !isExpired(o.stake));
+        const expired = own.filter((o) => o.stake.state === 0 && isExpired(o.stake));
+        const resolved = own.filter((o) => o.stake.state !== 0);
+
+        for (const { entry, stake } of active) {
+          commitmentsList.appendChild(renderCommitmentCard(entry, stake, failedIds));
+        }
+
+        if (expired.length > 0) {
+          const divider = document.createElement('div');
+          divider.className = 'list-divider';
+          divider.textContent = 'Deadline passed, not resolved yet';
+          commitmentsList.appendChild(divider);
+          for (const { entry, stake } of expired) {
+            commitmentsList.appendChild(renderCommitmentCard(entry, stake, failedIds));
+          }
+        }
+
+        const shown = resolved.slice(0, state.resolvedShown);
+        if (shown.length > 0) {
+          const divider = document.createElement('div');
+          divider.className = 'list-divider';
+          divider.textContent = 'Resolved';
+          commitmentsList.appendChild(divider);
+          for (const { entry, stake } of shown) {
+            commitmentsList.appendChild(renderCommitmentCard(entry, stake, failedIds));
+          }
+        }
+
+        if (resolved.length > state.resolvedShown) {
+          const moreBtn = document.createElement('button');
+          moreBtn.textContent = `Show ${Math.min(RESOLVED_PAGE_SIZE, resolved.length - state.resolvedShown)} more`;
+          moreBtn.addEventListener('click', () => {
+            state.resolvedShown += RESOLVED_PAGE_SIZE;
+            refreshList();
+          });
+          commitmentsList.appendChild(moreBtn);
+        }
+      }
+    } catch (err: any) {
+      console.error('Failed to load commitment details', err);
+      const p = document.createElement('p');
+      p.className = 'empty-state';
+      p.textContent = 'Could not load all commitment details. Hit Refresh to try again.';
+      commitmentsList.appendChild(p);
     }
   }
 
   if (state.account) {
-    const balance = (await state.publicClient.readContract({
-      address: state.network.contractAddress,
-      abi: COMMITMENT_ABI,
-      functionName: 'balances',
-      args: [state.account],
-    })) as bigint;
-    if (balance > 0n) {
-      withdrawPanel.style.display = 'block';
-      withdrawAmount.textContent = `${formatEther(balance)} ${state.network.currencySymbol} ready to withdraw.`;
-    } else {
-      withdrawPanel.style.display = 'none';
+    try {
+      const balance = (await state.publicClient.readContract({
+        address: state.network.contractAddress,
+        abi: COMMITMENT_ABI,
+        functionName: 'balances',
+        args: [state.account],
+      })) as bigint;
+      if (balance > 0n) {
+        withdrawPanel.style.display = 'block';
+        withdrawAmount.textContent = `${formatEther(balance)} ${state.network.currencySymbol} ready to withdraw.`;
+      } else {
+        withdrawPanel.style.display = 'none';
+      }
+    } catch (err) {
+      console.error('Failed to load withdrawable balance', err);
     }
   }
 }
@@ -573,34 +1196,18 @@ withdrawBtn.addEventListener('click', async () => {
       abi: COMMITMENT_ABI,
       functionName: 'withdraw',
     });
-    await state.publicClient!.waitForTransactionReceipt({ hash });
+    const receipt = await state.publicClient!.waitForTransactionReceipt({ hash });
+    assertMined(receipt, 'withdrawal');
     await refreshList();
   } catch (err: any) {
-    alert(err.shortMessage || err.message || String(err));
+    alert(friendlyTxError(err));
   } finally {
     withdrawBtn.disabled = false;
   }
 });
 
-connectBtn.addEventListener('click', connectWallet);
+connectBtn.addEventListener('click', () => (state.account ? disconnectWallet() : connectWallet()));
 createBtn.addEventListener('click', createCommitment);
 refreshBtn.addEventListener('click', refreshList);
 
-// Quick network-switch helpers, surfaced only when relevant.
-const switchRow = document.createElement('div');
-switchRow.style.marginTop = '0.5rem';
-switchRow.style.display = 'flex';
-switchRow.style.gap = '0.5rem';
-const localBtn = document.createElement('button');
-localBtn.textContent = 'Use Local Anvil';
-localBtn.addEventListener('click', switchToLocalAnvil);
-const testnetBtn = document.createElement('button');
-testnetBtn.textContent = 'Use Monad Testnet';
-testnetBtn.addEventListener('click', switchToMonadTestnet);
-switchRow.appendChild(localBtn);
-switchRow.appendChild(testnetBtn);
-document.querySelector('.wallet-bar')!.after(switchRow);
-
 render();
-
-console.log('Networks configured:', Object.values(NETWORKS).map((n) => n.name));
