@@ -4,7 +4,7 @@ Everything here is a draft, written before the real testnet deploy, the dogfood 
 
 ## Project name
 
-Ship It Stake
+Vow
 
 ## One line description
 
@@ -29,7 +29,7 @@ This submission itself was staked the same way: [dogfood transaction hash / comm
 
 ## Links
 
-- Contract address (Monad testnet): `[fill in]`
+- Contract address (Monad testnet): `0xB0A6AAdD39b8760213474151bd55BdeB7542d8Fc`
 - Repo: `[fill in GitHub URL]`
 - Demo video: `[fill in]`
 - Social post: `[fill in]`

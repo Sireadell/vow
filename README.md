@@ -1,4 +1,4 @@
-# Ship It Stake
+# Vow
 
 A commitment stake app built for the Spark hackathon on Monad.
 
@@ -32,7 +32,7 @@ Chosen at creation time, not after the fact:
 
 ## Repo layout
 
-- `contracts/`: the Commitment contract, written and tested with Foundry (24 tests, all state transitions covered)
+- `contracts/`: the Commitment contract, written and tested with Foundry (25 tests, all state transitions covered)
 - `backend/`: the AI referee. Reads submitted proof, judges it, and signs an onchain confirmation if it passes. Also watches the contract for failures.
 - `frontend/`: the web app. Connect a wallet, create a commitment, submit proof, get it judged, and confirm success or trigger failure
 
@@ -62,7 +62,7 @@ npm install
 npm run dev
 ```
 
-The frontend auto detects whether your wallet is on the local Anvil test chain or Monad testnet and points at the right contract for each.
+The frontend only supports Monad testnet. If your wallet is on a different chain, it prompts a switch instead of silently connecting somewhere the contract does not exist.
 
 ## What is next, not built yet
 

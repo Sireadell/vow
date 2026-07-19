@@ -47,7 +47,7 @@ Pick a stake amount you are actually willing to lose publicly. AI referee mode (
 
 ```
 cast send $CONTRACT "createCommitment(string,uint256,address,address)" \
-  "Ship the Spark hackathon submission (Ship-It Stake) by the deadline" \
+  "Ship the Spark hackathon submission (Vow) by the deadline" \
   $DEADLINE \
   0x0000000000000000000000000000000000000000 \
   $PENALTY_RECIPIENT \
