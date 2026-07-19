@@ -1,6 +1,4 @@
-# Spark submission draft
-
-Everything here is a draft, written before the real testnet deploy, the dogfood stake, and the demo video exist. Fill in the bracketed placeholders once those are real. Read it over and adjust the voice to sound like you, not like a draft.
+# Spark submission
 
 ## Project name
 
@@ -30,7 +28,8 @@ This submission itself was staked the same way: [dogfood transaction hash / comm
 ## Links
 
 - Contract address (Monad testnet): `0xB0A6AAdD39b8760213474151bd55BdeB7542d8Fc`
-- Repo: `[fill in GitHub URL]`
+- Repo: `https://github.com/Sireadell/vow`
+- Live app: `https://tryvow.vercel.app`
 - Demo video: `[fill in]`
 - Social post: `[fill in]`
 
