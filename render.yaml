@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: vow-backend
+    runtime: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NETWORK
+        value: testnet
+      - key: PORT
+        value: 3001
+      - key: MONAD_TESTNET_RPC_URL
+        value: https://testnet-rpc.monad.xyz/
+      - key: COMMITMENT_CONTRACT_ADDRESS
+        value: "0xB0A6AAdD39b8760213474151bd55BdeB7542d8Fc"
+      - key: ATTESTER_SIGNER_PRIVATE_KEY
+        sync: false
+      - key: ATTESTER_SIGNER_ADDRESS
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
+      - key: ANTHROPIC_API_KEY
+        sync: false
