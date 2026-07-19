@@ -21,7 +21,7 @@ This submission itself was staked the same way: [dogfood transaction hash / comm
 ## What is genuinely working, not just planned
 
 - A tested Solidity contract (25 Foundry tests, every state transition covered), independently reviewed for security before any real stake touched it
-- A backend AI referee that reads submitted proof and signs an onchain confirmation only if the proof text actually matches what was committed onchain, closing a real bypass that was found and fixed before deploy
+- A backend AI referee that reads submitted proof and signs an onchain confirmation only if the proof text actually matches what was committed onchain, so the judged proof and the enforced proof are always the same thing
 - A working frontend: connect a wallet, create a commitment, submit proof, get judged, confirm success or trigger failure
 - End to end verified: both the success path and the permissionless failure path, with correct payouts, confirmed live onchain
 
@@ -30,8 +30,8 @@ This submission itself was staked the same way: [dogfood transaction hash / comm
 - Contract address (Monad testnet): `0xB0A6AAdD39b8760213474151bd55BdeB7542d8Fc`
 - Repo: `https://github.com/Sireadell/vow`
 - Live app: `https://tryvow.vercel.app`
-- Demo video: `[fill in]`
-- Social post: `[fill in]`
+- Demo video: `https://x.com/Sireadell/status/2078975436109775196?s=20`
+- Social post: `https://x.com/Sireadell/status/2078975436109775196?s=20`
 
 ## Disclosed limitations, not hidden
 
